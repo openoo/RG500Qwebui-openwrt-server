@@ -10,11 +10,11 @@ on:
       target:
         description: OpenWrt target
         required: true
-        default: mediatek
+        default: qualcommax
       subtarget:
         description: OpenWrt subtarget
         required: true
-        default: filogic
+        default: ipq807x
       publish_release:
         description: Publish GitHub Release
         required: true
@@ -43,8 +43,8 @@ jobs:
 
     env:
       LEGACY_OPENWRT_VERSION: ${{ github.event.inputs.legacy_openwrt_version || '23.05.5' }}
-      OPENWRT_TARGET: ${{ github.event.inputs.target || 'mediatek' }}
-      OPENWRT_SUBTARGET: ${{ github.event.inputs.subtarget || 'filogic' }}
+      OPENWRT_TARGET: ${{ github.event.inputs.target || 'qualcommax' }}
+      OPENWRT_SUBTARGET: ${{ github.event.inputs.subtarget || 'ipq807x' }}
 
     steps:
       - name: Checkout
