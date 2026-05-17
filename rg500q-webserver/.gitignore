@@ -1,2 +1,3 @@
 /target
 **/*.rs.bk
+/files/usr/bin/rg500q-webserver

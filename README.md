@@ -41,7 +41,7 @@ make package/rg500q-webserver/compile
 make package/luci-app-rg500q-webui/compile
 ```
 
-GitHub Actions 会分别发布 24.10 的 `.ipk` 和 25.12 的 `.apk`。Rust 后端构建时会覆盖 `CI=false`，避免 OpenWrt `rust/host` 在 GitHub Actions 环境里误判 CI 后拒绝下载预编译 LLVM。
+GitHub Actions 会分别发布 24.10 的 `.ipk` 和 25.12 的 `.apk`。Rust 后端会先用 `aarch64-musl` 容器交叉编译成静态二进制，再交给 OpenWrt SDK 打包，因此不会触发 SDK 内部的 `rust/host` 编译。
 
 ## 安装
 

@@ -45,10 +45,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cross build Rust backend
+        if: matrix.package == 'rg500q-webserver'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker run --rm \
+            -v "$PWD/rg500q-webserver":/home/rust/src \
+            messense/rust-musl-cross:aarch64-musl \
+            cargo build --release --locked
+          mkdir -p rg500q-webserver/files/usr/bin
+          cp rg500q-webserver/target/aarch64-unknown-linux-musl/release/rg500q-webserver \
+            rg500q-webserver/files/usr/bin/rg500q-webserver
+          chmod +x rg500q-webserver/files/usr/bin/rg500q-webserver
+
       - name: Build package
         uses: nooblk-98/openwrt-package-compile-action@main
-        env:
-          CI: "false"
         with:
           sdk-version: ${{ matrix.openwrt }}
           sdk-target: qualcommax
