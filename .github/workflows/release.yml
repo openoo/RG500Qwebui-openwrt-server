@@ -25,9 +25,17 @@ jobs:
       matrix:
         include:
           - openwrt: "24.10.6"
+            package: rg500q-webserver
+            package_dir: rg500q-webserver
+            extension: ipk
+          - openwrt: "24.10.6"
             package: luci-app-rg500q-webui
             package_dir: luci-app-rg500q-webui
             extension: ipk
+          - openwrt: "25.12.3"
+            package: rg500q-webserver
+            package_dir: rg500q-webserver
+            extension: apk
           - openwrt: "25.12.3"
             package: luci-app-rg500q-webui
             package_dir: luci-app-rg500q-webui
@@ -39,6 +47,8 @@ jobs:
 
       - name: Build package
         uses: nooblk-98/openwrt-package-compile-action@main
+        env:
+          CI: "false"
         with:
           sdk-version: ${{ matrix.openwrt }}
           sdk-target: qualcommax
