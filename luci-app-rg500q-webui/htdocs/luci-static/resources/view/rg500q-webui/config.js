@@ -1,0 +1,458 @@
+'use strict';
+'require view';
+'require form';
+'require uci';
+'require rpc';
+'require fs';
+'require ui';
+
+var callServiceList = rpc.declare({
+	object: 'service',
+	method: 'list',
+	params: ['name'],
+	expect: { '': {} }
+});
+
+var callInitAction = rpc.declare({
+	object: 'luci',
+	method: 'setInitAction',
+	params: ['name', 'action'],
+	expect: { result: false }
+});
+
+function getServiceStatus() {
+	return L.resolveDefault(callServiceList('rg500q-webserver'), {}).then(function(res) {
+		var isRunning = false;
+		try {
+			isRunning = res['rg500q-webserver']['instances']['instance1']['running'];
+		} catch(e) { }
+		return isRunning;
+	});
+}
+
+return view.extend({
+	load: function() {
+		return Promise.all([
+			uci.load('rg500q-webserver'),
+			getServiceStatus()
+		]);
+	},
+
+	render: function(data) {
+		var isRunning = data[1];
+		var m, s, o;
+
+		m = new form.Map('rg500q-webserver', _('RG500Q WebUI'),
+			_('WebSocket服务器，用于通过Web界面管理AT命令。'));
+
+		s = m.section(form.NamedSection, 'config', 'rg500q-webserver');
+		s.addremove = false;
+		s.anonymous = false;
+
+		// 分页定义
+		s.tab('general', _('基本设置'));
+		s.tab('network', _('高级网络'));
+		s.tab('websocket', _('WebSocket'));
+		s.tab('notify', _('通知与日志'));
+
+		// --- 基本设置 ---
+		
+		// 服务状态显示
+		o = s.taboption('general', form.DummyValue, '_status', _('服务状态'));
+		o.cfgvalue = function() {
+			return isRunning ? 
+				'<span style="color:green">● ' + _('运行中') + '</span>' : 
+				'<span style="color:red">● ' + _('已停止') + '</span>';
+		};
+		o.rawhtml = true;
+
+		// 启用开关
+		o = s.taboption('general', form.Flag, 'enabled', _('启用服务'),
+			_('启用后服务将在系统启动时自动运行'));
+		o.rmempty = false;
+
+		// 连接类型
+		o = s.taboption('general', form.ListValue, 'connection_type', _('连接类型'),
+			_('选择AT命令的连接方式'));
+		o.value('NETWORK', _('网络连接'));
+		o.value('SERIAL', _('串口连接'));
+		o.default = 'SERIAL';
+		o.rmempty = false;
+
+		// 网络连接配置
+		o = s.taboption('general', form.Value, 'network_host', _('网络主机'),
+			_('AT命令服务的IP地址'));
+		o.datatype = 'host';
+		o.default = '192.168.17.1';
+		o.depends('connection_type', 'NETWORK');
+
+		o = s.taboption('general', form.Value, 'network_port', _('网络端口'),
+			_('AT命令服务的端口号'));
+		o.datatype = 'port';
+		o.default = '8765';
+		o.depends('connection_type', 'NETWORK');
+
+		// 模块访问安全配置
+		o = s.taboption('general', form.DummyValue, '_module_security_title', _('模块访问安全'));
+		o.rawhtml = true;
+		o.cfgvalue = function() {
+			return '<strong style="color:#0099CC;">━━━━━━━ 模块网络 AT 访问控制 ━━━━━━━</strong>';
+		};
+		o.depends('connection_type', 'NETWORK');
+
+		o = s.taboption('general', form.Flag, 'network_allow_wan', _('☐ 允许外网访问模块'),
+			_('是否允许从外网直接访问模块的 AT 端口。<br><strong style="color:red;">⚠️ 安全警告：</strong>开启此选项将允许任何人从外网访问模块，存在严重安全风险！<br><strong>建议：</strong>保持关闭，仅通过 WebSocket 管理。<br><em>注意：此选项仅在"网络连接"模式下生效。</em>'));
+		o.default = '0';
+		o.rmempty = false;
+		o.depends('connection_type', 'NETWORK');
+
+		o = s.taboption('general', form.Flag, 'network_restrict_access', _('☐ 限制模块局域网访问'),
+			_('启用后，只有路由器本身可以访问模块网络 AT 端口，局域网其他设备将无法访问。<br><strong>适用场景：</strong>防止局域网设备直接访问模块，统一通过 WebSocket 管理。<br><em>注意：此选项仅在"网络连接"模式下生效。</em>'));
+		o.default = '0';
+		o.rmempty = false;
+		o.depends('connection_type', 'NETWORK');
+
+		// 串口连接配置
+		o = s.taboption('general', form.ListValue, 'serial_port', _('串口设备'),
+			_('选择串口设备或手动输入路径'));
+		o.depends('connection_type', 'SERIAL');
+		
+		// 动态添加系统中可用的串口设备
+		o.load = function(section_id) {
+			return Promise.all([
+				fs.list('/dev').catch(function() { return []; }),
+				form.ListValue.prototype.load.apply(this, [section_id])
+			]).then(L.bind(function(results) {
+				var devices = results[0] || [];
+				var currentValue = results[1];
+				
+				this.keylist = [];
+				this.vallist = [];
+				
+				var serialDevices = [];
+				devices.forEach(function(item) {
+					var name = item.name;
+					if (name.match(/^tty(USB|ACM|S)\d+$/)) {
+						serialDevices.push('/dev/' + name);
+					}
+				});
+				
+				serialDevices.sort();
+				
+				if (serialDevices.length > 0) {
+					serialDevices.forEach(L.bind(function(dev) {
+						this.value(dev, dev);
+					}, this));
+				} else {
+					this.value('/dev/ttyUSB3', '/dev/ttyUSB3 (RG500Q 默认)');
+				}
+				
+				this.value('custom', _('自定义路径...'));
+				
+				if (currentValue && !serialDevices.includes(currentValue) && currentValue !== 'custom') {
+					this.value(currentValue, currentValue + ' (当前)');
+				}
+				
+				return currentValue;
+			}, this));
+		};
+		o.default = '/dev/ttyUSB3';
+		
+		o = s.taboption('general', form.Value, 'serial_port_custom', _('自定义串口路径'),
+			_('输入完整的串口设备路径'));
+		o.depends('serial_port', 'custom');
+		o.placeholder = '/dev/ttyUSB3';
+		o.rmempty = false;
+
+		o = s.taboption('general', form.ListValue, 'serial_baudrate', _('波特率'),
+			_('串口通信波特率'));
+		o.value('9600', '9600');
+		o.value('19200', '19200');
+		o.value('38400', '38400');
+		o.value('57600', '57600');
+		o.value('115200', '115200');
+		o.value('230400', '230400');
+		o.value('460800', '460800');
+		o.value('921600', '921600');
+		o.default = '115200';
+		o.depends('connection_type', 'SERIAL');
+
+
+		// --- 高级网络 ---
+		
+		o = s.taboption('network', form.DynamicList, 'dns_list', _('自定义 DNS'), _('留空则自动使用运营商下发的 DNS。填写后将强制使用此处指定的 DNS 服务器。'));
+		o.datatype = 'ipaddr';
+		o.optional = true;
+		o.rmempty = true;
+
+		// 1. 添加标题和主开关
+		o = s.taboption('network', form.DummyValue, '_schedule_title', '<br/><strong style="color:#0099CC;">━━━━━━━ 定时锁频 (计划任务) ━━━━━━━</strong>');
+		o.rawhtml = true;
+		o = s.taboption('network', form.Flag, 'schedule_enabled', _('启用定时锁频'));
+		o.default = '0';
+
+		// 2. 添加基础设置 (需 depends('schedule_enabled', '1'))
+		o = s.taboption('network', form.Value, 'schedule_check_interval', _('检测间隔 (秒)'));
+		o.datatype = 'uinteger';
+		o.default = '60';
+		o.depends('schedule_enabled', '1');
+
+		o = s.taboption('network', form.Value, 'schedule_timeout', _('无服务超时 (秒)'));
+		o.datatype = 'uinteger';
+		o.default = '180';
+		o.depends('schedule_enabled', '1');
+
+		o = s.taboption('network', form.Flag, 'schedule_unlock_lte', _('恢复时解锁 LTE'));
+		o.default = '1';
+		o.depends('schedule_enabled', '1');
+
+		o = s.taboption('network', form.Flag, 'schedule_unlock_nr', _('恢复时解锁 NR'));
+		o.default = '1';
+		o.depends('schedule_enabled', '1');
+
+		o = s.taboption('network', form.Flag, 'schedule_toggle_airplane', _('切换飞行模式生效'));
+		o.default = '1';
+		o.depends('schedule_enabled', '1');
+
+		// 3. 核心精简：使用数组遍历生成 日间/夜间 模式表单，防止代码冗长
+		const modes = [
+			{ prefix: 'night', name: '夜间', start: '22:00', end: '06:00' },
+			{ prefix: 'day', name: '日间' }
+		];
+
+		modes.forEach(mode => {
+			o = s.taboption('network', form.SectionValue, `_${mode.prefix}_mode_title`, form.NamedSection, 'config', 'rg500q-webserver', `>>> ${mode.name}模式设置 <<<`);
+			o.depends('schedule_enabled', '1');
+
+			o = s.taboption('network', form.Flag, `schedule_${mode.prefix}_enabled`, _(`启用${mode.name}模式`));
+			o.default = '1';
+			o.depends('schedule_enabled', '1');
+
+			if (mode.prefix === 'night') {
+				o = s.taboption('network', form.Value, `schedule_${mode.prefix}_start`, _('开始时间'));
+				o.placeholder = mode.start;
+				o.default = mode.start;
+				o.depends(`schedule_${mode.prefix}_enabled`, '1');
+
+				o = s.taboption('network', form.Value, `schedule_${mode.prefix}_end`, _('结束时间'));
+				o.placeholder = mode.end;
+				o.default = mode.end;
+				o.depends(`schedule_${mode.prefix}_enabled`, '1');
+			}
+
+			['lte', 'nr'].forEach(net => {
+				const netName = net.toUpperCase();
+				const optPrefix = `schedule_${mode.prefix}_${net}`;
+				
+				// 添加 type
+				o = s.taboption('network', form.ListValue, `${optPrefix}_type`, _(`${mode.name} ${netName} 锁定类型`));
+				o.value('0', _('解锁'));
+				o.value('1', _('频点锁定'));
+				o.value('2', _('小区锁定'));
+				o.value('3', _('频段锁定'));
+				o.default = '3';
+				o.depends(`schedule_${mode.prefix}_enabled`, '1');
+
+				// 添加 bands
+				o = s.taboption('network', form.Value, `${optPrefix}_bands`, _(`${mode.name} ${netName} 频段`));
+				o.placeholder = net === 'lte' ? '3,8' : '78,41';
+				o.depends(`${optPrefix}_type`, '1');
+				o.depends(`${optPrefix}_type`, '2');
+				o.depends(`${optPrefix}_type`, '3');
+				o.depends('schedule_enabled', '1'); // 额外依赖
+
+				// 添加 arfcns
+				o = s.taboption('network', form.Value, `${optPrefix}_arfcns`, _(`${mode.name} ${netName} 频点`));
+				o.depends(`${optPrefix}_type`, '1');
+				o.depends(`${optPrefix}_type`, '2');
+				o.depends('schedule_enabled', '1'); // 额外依赖
+
+				// 如果是 nr，添加 scs_types
+				if (net === 'nr') {
+					o = s.taboption('network', form.Value, `${optPrefix}_scs_types`, _(`${mode.name} NR SCS 类型`));
+					o.placeholder = '1,1';
+					o.depends(`${optPrefix}_type`, '2');
+					o.depends('schedule_enabled', '1'); // 额外依赖
+				}
+
+				// 添加 pcis
+				o = s.taboption('network', form.Value, `${optPrefix}_pcis`, _(`${mode.name} ${netName} PCI`));
+				o.depends(`${optPrefix}_type`, '2');
+				o.depends('schedule_enabled', '1'); // 额外依赖
+			});
+		});
+
+		// --- WebSocket ---
+
+		o = s.taboption('websocket', form.Value, 'websocket_port', _('WebSocket 端口'),
+			_('WebSocket服务器监听端口'));
+		o.datatype = 'port';
+		o.default = '8765';
+
+		o = s.taboption('websocket', form.Flag, 'websocket_allow_wan', _('☐ 允许外网访问 WebSocket'),
+			_('是否允许从外网访问 WebSocket。启用后将自动配置防火墙规则。<br><strong>安全提示：</strong>如果允许外网访问，强烈建议设置连接密钥！'));
+		o.rmempty = false;
+		o.default = '0';
+
+		o = s.taboption('websocket', form.Value, 'websocket_auth_key', _('连接密钥'),
+			_('WebSocket 连接密钥，用于验证客户端身份。<br>留空则不进行验证（不安全！）<br>建议使用复杂的随机字符串。'));
+		o.password = true;
+		o.placeholder = '留空表示不验证';
+		o.rmempty = true;
+
+		// --- 通知与日志 ---
+
+		// 系统日志配置
+		o = s.taboption('notify', form.DummyValue, '_syslog_title', _('系统日志'));
+		o.rawhtml = true;
+		o.cfgvalue = function() { return '<h3>' + _('系统运行日志配置') + '</h3>'; };
+
+		o = s.taboption('notify', form.Flag, 'sys_log_enable', _('启用系统日志'), _('记录系统运行日志'));
+		o.default = '1';
+
+		o = s.taboption('notify', form.Flag, 'sys_log_persist', _('持久化日志'), _('将日志保存到非易失存储（重启后保留）。已启用写缓存(8KB/5秒)和日志轮转(1MB)以保护 Flash。'));
+		o.default = '0';
+		o.depends('sys_log_enable', '1');
+
+		o = s.taboption('notify', form.ListValue, 'sys_log_level', _('日志等级'), _('选择写入系统日志的最低详细程度。Info 仅保留必要运行信息，Debug 用于排障。'));
+		o.value('error', _('错误'));
+		o.value('warn', _('警告'));
+		o.value('info', _('信息（推荐）'));
+		o.value('debug', _('调试'));
+		o.default = 'info';
+		o.depends('sys_log_enable', '1');
+
+		// ---------------------------------------------------------
+		// 事件通知触发条件
+		// ---------------------------------------------------------
+		o = s.taboption('notify', form.DummyValue, '_notify_title', _('事件通知触发'));
+		o.rawhtml = true;
+		o.cfgvalue = function() { return '<h3>' + _('短信与事件通知配置') + '</h3>'; };
+
+		o = s.taboption('notify', form.Flag, 'notify_log_enable', _('记录通知日志'), _('记录短信、来电等通知事件到日志文件'));
+		o.default = '1';
+
+		o = s.taboption('notify', form.Flag, 'notify_log_persist', _('持久化通知日志'), _('将通知日志保存到非易失存储。已启用写缓存(8KB/5秒)和日志轮转(1MB)。'));
+		o.default = '0';
+		o.depends('notify_log_enable', '1');
+
+		o = s.taboption('notify', form.Flag, 'notify_sms', _('短信通知'), _('接收到新短信时发送通知'));
+		o.default = '1';
+
+		o = s.taboption('notify', form.Flag, 'notify_call', _('来电通知'), _('来电时发送通知'));
+		o.default = '1';
+
+		o = s.taboption('notify', form.Value, 'notify_memory_full_threshold', _('存储满通知阈值'), _('短信存储使用率超过此值时发送警告（0=禁用，1-100 表示百分比，推荐 80）'));
+		o.datatype = 'range(0,100)';
+
+		// 新增：短信转发后是否删除原短信
+		o = s.taboption('notify', form.Flag, 'sms_delete_after_forward', _('第三方转发后删除短信'), _('启用后，只有当短信成功转发到第三方通道（如微信、钉钉等）后，才自动从 SIM 卡存储中删除该短信。WebSocket 实时推送不会触发删除。'));
+		o.default = '0';
+		o.depends('notify_sms', '1');
+
+		o = s.taboption('notify', form.Flag, 'delete_mms_notification', _('识别彩信通知后自动删除'), _('启用后，识别到 WAP Push / MMS 通知短信时，将在解析后自动从短信存储中删除。默认关闭。'));
+		o.default = '0';
+		o.depends('notify_sms', '1');
+
+		o = s.taboption('notify', form.Value, 'notify_signal_threshold', _('信号通知阈值'), _('RSRP 低于 -N dBm 时发送通知（0=禁用，推荐 100 表示低于 -100 dBm 时通知）'));
+		o.datatype = 'uinteger';
+
+		// ---------------------------------------------------------
+		// 第三方推送通道 (修复 Bug：将原 MultiValue 改为独立开关)
+		// ---------------------------------------------------------
+		o = s.taboption('notify', form.DummyValue, '_push_title', _('第三方推送通道'));
+		o.rawhtml = true;
+		o.cfgvalue = function() { return '<h3>' + _('第三方推送通道配置') + '</h3>'; };
+
+		// 1. 企业微信
+		o = s.taboption('notify', form.Flag, 'enable_wechat', _('启用企业微信'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'wechat_webhook', _('企业微信 Webhook'), _('企业微信机器人的 Webhook 地址'));
+		o.placeholder = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...';
+		o.depends('enable_wechat', '1');
+
+		// 2. PushPlus
+		o = s.taboption('notify', form.Flag, 'enable_pushplus', _('启用 PushPlus'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'pushplus_token', _('PushPlus Token'), _('PushPlus 用户令牌'));
+		o.placeholder = 'your_token_here';
+		o.depends('enable_pushplus', '1');
+
+		// 3. Server酱
+		o = s.taboption('notify', form.Flag, 'enable_serverchan', _('启用 Server酱'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'serverchan_key', _('Server酱 SendKey'), _('Server酱 SendKey'));
+		o.placeholder = 'SCT...';
+		o.depends('enable_serverchan', '1');
+
+		// 4. PushDeer
+		o = s.taboption('notify', form.Flag, 'enable_pushdeer', _('启用 PushDeer'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'pushdeer_key', _('PushDeer Key'), _('PushDeer PushKey'));
+		o.placeholder = 'PDU...';
+		o.depends('enable_pushdeer', '1');
+		
+		o = s.taboption('notify', form.Value, 'pushdeer_url', _('PushDeer Server'), _('自建 PushDeer 服务器地址，留空使用官方'));
+		o.placeholder = 'https://api2.pushdeer.com';
+		o.depends('enable_pushdeer', '1');
+
+		// 5. 飞书
+		o = s.taboption('notify', form.Flag, 'enable_feishu', _('启用飞书'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'feishu_webhook', _('飞书 Webhook'), _('飞书群机器人 Webhook 地址'));
+		o.placeholder = 'https://open.feishu.cn/open-apis/bot/v2/hook/...';
+		o.depends('enable_feishu', '1');
+
+		// 6. 钉钉
+		o = s.taboption('notify', form.Flag, 'enable_dingtalk', _('启用钉钉'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'dingtalk_webhook', _('钉钉 Webhook'), _('钉钉群机器人 Webhook 地址'));
+		o.placeholder = 'https://oapi.dingtalk.com/robot/send?access_token=...';
+		o.depends('enable_dingtalk', '1');
+		
+		o = s.taboption('notify', form.Value, 'dingtalk_secret', _('钉钉加签密钥'), _('钉钉机器人加签密钥（可选）'));
+		o.depends('enable_dingtalk', '1');
+
+		// 7. Bark
+		o = s.taboption('notify', form.Flag, 'enable_bark', _('启用 Bark'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'bark_url', _('Bark Server'), _('Bark 服务器地址 (例如 https://api.day.app/YOUR_KEY/)'));
+		o.placeholder = 'https://api.day.app/YOUR_KEY/';
+		o.depends('enable_bark', '1');
+
+		// 8. Telegram Bot
+		o = s.taboption('notify', form.Flag, 'enable_telegram', _('启用 Telegram'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'tg_bot_token', _('TG Bot Token'), _('Telegram 机器人 Token'));
+		o.placeholder = '123456789:ABC...';
+		o.depends('enable_telegram', '1');
+
+		o = s.taboption('notify', form.Value, 'tg_chat_id', _('TG Chat ID'), _('接收通知的 Chat ID'));
+		o.placeholder = '123456789';
+		o.depends('enable_telegram', '1');
+
+		// 9. 通用 Webhook
+		o = s.taboption('notify', form.Flag, 'enable_generic', _('启用通用 Webhook'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'generic_webhook_url', _('Webhook URL'), _('通用的 POST 请求地址'));
+		o.placeholder = 'https://example.com/api/notify';
+		o.depends('enable_generic', '1');
+
+		// 10. 自定义脚本
+		o = s.taboption('notify', form.Flag, 'enable_custom', _('启用自定义脚本'));
+		o.default = '0';
+		o = s.taboption('notify', form.Value, 'custom_script_path', _('脚本路径'), _('当有通知时执行的脚本路径'));
+		o.placeholder = '/usr/bin/my-notify-script.sh';
+		o.depends('enable_custom', '1');
+
+		return m.render();
+	},
+
+	handleSaveApply: function(ev, mode) {
+		return this.super('handleSaveApply', [ev, mode]).then(function() {
+			return callInitAction('rg500q-webserver', 'restart');
+		});
+	},
+
+	handleReset: null
+});

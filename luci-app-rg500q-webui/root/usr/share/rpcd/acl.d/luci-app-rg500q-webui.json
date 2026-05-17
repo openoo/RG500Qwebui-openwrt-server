@@ -1,0 +1,41 @@
+{
+	"luci-app-rg500q-webui": {
+		"description": "Grant UCI access for luci-app-rg500q-webui",
+		"read": {
+			"uci": [ "rg500q-webserver", "firewall" ],
+			"ubus": {
+				"file": [ "list", "read", "stat", "exec" ],
+				"luci": [ "getInitList", "getRealtimeStats" ],
+				"service": [ "list", "get_data" ],
+				"system": [ "info" ],
+				"uci": [ "get", "state", "configs" ]
+			},
+			"file": {
+				"/etc/config/rg500q-webserver": [ "read", "stat" ],
+				"/etc/config/firewall": [ "read", "stat" ],
+				"/etc/init.d/rg500q-webserver": [ "list", "read", "stat", "exec" ],
+				"/tmp/*": [ "list", "read", "stat" ],
+				"/var/log/*": [ "list", "read", "stat" ],
+				"/www/cgi-bin/at-ws-info": [ "exec" ],
+				"/www/cgi-bin/at-log-clear": [ "exec" ],
+				"/sbin/logread": [ "exec" ]
+			}
+		},
+		"write": {
+			"uci": [ "rg500q-webserver", "firewall" ],
+			"ubus": {
+				"file": [ "write", "read", "stat", "exec", "remove" ],
+				"luci": [ "setInitAction" ],
+				"service": [ "set", "delete", "update" ],
+				"uci": [ "add", "set", "delete", "commit", "apply", "changes", "revert", "order" ]
+			},
+			"file": {
+				"/etc/config/rg500q-webserver": [ "write", "read", "stat" ],
+				"/etc/config/firewall": [ "write", "read", "stat" ],
+				"/etc/init.d/rg500q-webserver": [ "exec" ],
+				"/tmp/*": [ "write", "read", "stat" ],
+				"/var/log/*": [ "write", "read", "stat" ]
+			}
+		}
+	}
+}

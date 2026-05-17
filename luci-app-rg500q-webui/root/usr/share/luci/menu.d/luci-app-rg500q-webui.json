@@ -1,0 +1,52 @@
+{
+	"admin/modem": {
+		"title": "Modem",
+		"order": 50,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-rg500q-webui" ]
+		}
+	},
+	"admin/modem/atwebserver": {
+		"title": "RG500Q WebUI",
+		"order": 1,
+		"action": {
+			"type": "firstchild"
+		}
+	},
+	"admin/modem/modemwebui": {
+		"title": "模块管理面板",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "rg500q-webui/webui"
+		}
+	},
+	"admin/modem/atwebserver/config": {
+		"title": "配置",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "rg500q-webui/config"
+		}
+	},
+	"admin/modem/atwebserver/logs": {
+		"title": "日志",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "rg500q-webui/logs"
+		}
+	},
+	"admin/modem/atwebserver/debug": {
+		"title": "AT调试",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "rg500q-webui/debug"
+		}
+	}
+}
+

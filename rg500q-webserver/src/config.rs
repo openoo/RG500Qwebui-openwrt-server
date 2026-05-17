@@ -1,0 +1,486 @@
+use crate::models::ConnectionType;
+use crate::rg500q;
+use std::process::Command;
+use log::{debug, info, error};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub at_config: AtConfig,
+    pub notification_config: NotificationConfig,
+    pub websocket_config: WebSocketConfig,
+    pub schedule_config: ScheduleConfig,
+    pub advanced_network_config: AdvancedNetworkConfig,
+    pub sys_log_config: SysLogConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct SysLogConfig {
+    pub enable: bool,
+    pub persist: bool,
+    pub level: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AtConfig {
+    pub connection_type: ConnectionType,
+    pub network: NetworkConfig,
+    pub serial: SerialConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct NetworkConfig {
+    pub host: String,
+    pub port: u16,
+    pub timeout: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SerialConfig {
+    pub port: String,
+    pub baudrate: u32,
+    pub timeout: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NotificationConfig {
+    pub enabled_push_services: Vec<String>,
+    pub wechat_webhook: Option<String>,
+    pub pushplus_token: Option<String>,
+    pub serverchan_key: Option<String>,
+    pub pushdeer_key: Option<String>,
+    pub pushdeer_url: Option<String>,
+    pub feishu_webhook: Option<String>,
+    pub dingtalk_webhook: Option<String>,
+    pub dingtalk_secret: Option<String>,
+    pub bark_url: Option<String>,
+    pub tg_bot_token: Option<String>,
+    pub tg_chat_id: Option<String>,
+    pub generic_webhook_url: Option<String>,
+    pub custom_script_path: Option<String>,
+    // pub log_file: Option<String>, // Removed, using standard paths
+    pub notify_log_enable: bool,
+    pub notify_log_persist: bool,
+    pub notify_sms: bool,
+    pub notify_call: bool,
+    /// 短信存储使用率超过此百分比时通知（0=禁用，1-100=阈值）
+    pub notify_memory_full_threshold: u8,
+    /// 信号强度（RSRP dBm 绝对值）低于此值时通知（0=禁用）
+    pub notify_signal_threshold: i32,
+    pub sms_delete_after_forward: bool,
+    pub delete_mms_notification: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebSocketConfig {
+    pub ipv4: IpConfig,
+    pub ipv6: IpConfig,
+    pub auth_key: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IpConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScheduleConfig {
+    pub enabled: bool,
+    pub check_interval: u64,
+    pub timeout: u64,
+    pub unlock_lte: bool,
+    pub unlock_nr: bool,
+    pub toggle_airplane: bool,
+    
+    // Night Mode
+    pub night_enabled: bool,
+    pub night_start: String,
+    pub night_end: String,
+    pub night_lte_type: u8,
+    pub night_lte_bands: String,
+    pub night_lte_arfcns: String,
+    pub night_lte_pcis: String,
+    pub night_nr_type: u8,
+    pub night_nr_bands: String,
+    pub night_nr_arfcns: String,
+    pub night_nr_scs_types: String,
+    pub night_nr_pcis: String,
+    
+    // Day Mode
+    pub day_enabled: bool,
+    pub day_lte_type: u8,
+    pub day_lte_bands: String,
+    pub day_lte_arfcns: String,
+    pub day_lte_pcis: String,
+    pub day_nr_type: u8,
+    pub day_nr_bands: String,
+    pub day_nr_arfcns: String,
+    pub day_nr_scs_types: String,
+    pub day_nr_pcis: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdvancedNetworkConfig {
+    pub pdp_type: String,
+    pub ifname: String,
+    pub ra_master: bool,
+    pub extend_prefix: bool,
+    pub dns_list: Vec<String>,
+    pub init_at_cmds: Vec<String>,
+    /// 短信存储位置，对应 AT+CPMS 的 mem1/mem2/mem3
+    /// 模组掉电不保存，由后端在每次启动时重新下发
+    /// 可选值："SM"（SIM卡）、"ME"（Flash）
+    pub sms_storage: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            at_config: AtConfig {
+                connection_type: ConnectionType::Serial,
+                network: NetworkConfig {
+                    host: "192.168.17.1".to_string(),
+                    port: 8765,
+                    timeout: 10,
+                },
+                serial: SerialConfig {
+                    port: rg500q::DEFAULT_SERIAL_PORT.to_string(),
+                    baudrate: 115200,
+                    timeout: 10,
+                },
+            },
+            notification_config: NotificationConfig {
+                enabled_push_services: Vec::new(),
+                wechat_webhook: None,
+                pushplus_token: None,
+                serverchan_key: None,
+                pushdeer_key: None,
+                pushdeer_url: None,
+                feishu_webhook: None,
+                dingtalk_webhook: None,
+                dingtalk_secret: None,
+                bark_url: None,
+                tg_bot_token: None,
+                tg_chat_id: None,
+                generic_webhook_url: None,
+                custom_script_path: None,
+                // log_file: None,
+                notify_log_enable: true,
+                notify_log_persist: false,
+                notify_sms: true,
+                notify_call: true,
+                notify_memory_full_threshold: 90,
+                notify_signal_threshold: 0,
+                sms_delete_after_forward: false,
+                delete_mms_notification: false,
+            },
+            websocket_config: WebSocketConfig {
+                ipv4: IpConfig {
+                    host: "0.0.0.0".to_string(),
+                    port: 8765,
+                },
+                ipv6: IpConfig {
+                    host: "::".to_string(),
+                    port: 8765,
+                },
+                auth_key: None,
+            },
+            schedule_config: ScheduleConfig {
+                enabled: false,
+                check_interval: 60,
+                timeout: 180,
+                unlock_lte: true,
+                unlock_nr: true,
+                toggle_airplane: true,
+                night_enabled: true,
+                night_start: "22:00".to_string(),
+                night_end: "06:00".to_string(),
+                night_lte_type: 3,
+                night_lte_bands: "".to_string(),
+                night_lte_arfcns: "".to_string(),
+                night_lte_pcis: "".to_string(),
+                night_nr_type: 3,
+                night_nr_bands: "".to_string(),
+                night_nr_arfcns: "".to_string(),
+                night_nr_scs_types: "".to_string(),
+                night_nr_pcis: "".to_string(),
+                day_enabled: true,
+                day_lte_type: 3,
+                day_lte_bands: "".to_string(),
+                day_lte_arfcns: "".to_string(),
+                day_lte_pcis: "".to_string(),
+                day_nr_type: 3,
+                day_nr_bands: "".to_string(),
+                day_nr_arfcns: "".to_string(),
+                day_nr_scs_types: "".to_string(),
+                day_nr_pcis: "".to_string(),
+            },
+            advanced_network_config: AdvancedNetworkConfig {
+                pdp_type: "ipv4v6".to_string(),
+                ifname: "auto".to_string(),
+                ra_master: true,
+                extend_prefix: true,
+                dns_list: vec![],
+                init_at_cmds: vec![],
+                sms_storage: "SM".to_string(),
+            },
+            sys_log_config: SysLogConfig {
+                enable: true,
+                persist: false,
+                level: "info".to_string(),
+            },
+        }
+    }
+}
+
+impl Config {
+    pub fn load() -> Self {
+        let mut config = Config::default();
+        let mut uci_data = HashMap::new();
+
+        debug!("Loading configuration from UCI...");
+
+        // Run `uci show rg500q-webserver`
+        match Command::new("uci").args(&["show", "rg500q-webserver"]).output() {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if let Some((key, value)) = line.split_once('=') {
+                        if key.starts_with("rg500q-webserver.config.") {
+                            let short_key = key.trim_start_matches("rg500q-webserver.config.");
+                            let clean_value = value.trim().trim_matches('\'').trim_matches('"').to_string();
+                            uci_data.insert(short_key.to_string(), clean_value);
+                        }
+                    }
+                }
+            }
+            Ok(_) => {
+                error!("UCI command returned non-zero status. Using default config.");
+            }
+            Err(e) => {
+                error!("Failed to execute UCI command: {}. Using default config.", e);
+            }
+        }
+
+        // Helper to get string value
+        let get_str = |key: &str, default: &str| -> String {
+            uci_data.get(key).cloned().unwrap_or_else(|| default.to_string())
+        };
+
+        // Helper to get bool value
+        let get_bool = |key: &str, default: bool| -> bool {
+            match uci_data.get(key).map(|s| s.as_str()) {
+                Some("1") | Some("true") | Some("on") => true,
+                Some("0") | Some("false") | Some("off") => false,
+                _ => default,
+            }
+        };
+
+        // Helper to get int value
+        let get_int = |key: &str, default: u64| -> u64 {
+            uci_data.get(key).and_then(|s| s.parse().ok()).unwrap_or(default)
+        };
+        
+        let get_u32 = |key: &str, default: u32| -> u32 {
+            uci_data.get(key).and_then(|s| s.parse().ok()).unwrap_or(default)
+        };
+        
+        let get_u16 = |key: &str, default: u16| -> u16 {
+            uci_data.get(key).and_then(|s| s.parse().ok()).unwrap_or(default)
+        };
+        
+        let get_u8 = |key: &str, default: u8| -> u8 {
+            uci_data.get(key).and_then(|s| s.parse().ok()).unwrap_or(default)
+        };
+
+        // AT Config
+        let conn_type_str = get_str("connection_type", "SERIAL");
+        if conn_type_str == "SERIAL" {
+            config.at_config.connection_type = ConnectionType::Serial;
+        } else {
+            config.at_config.connection_type = ConnectionType::Network;
+        }
+
+        config.at_config.network.host = get_str("network_host", "192.168.17.1");
+        config.at_config.network.port = get_u16("network_port", 8765);
+        config.at_config.network.timeout = get_int("network_timeout", 10);
+
+        let mut serial_port = get_str("serial_port", rg500q::DEFAULT_SERIAL_PORT);
+        if serial_port == "custom" {
+            serial_port = get_str("serial_port_custom", rg500q::DEFAULT_SERIAL_PORT);
+        }
+        config.at_config.serial.port = serial_port;
+        config.at_config.serial.baudrate = get_u32("serial_baudrate", 115200);
+        config.at_config.serial.timeout = get_int("serial_timeout", 10);
+
+        // Notification Config
+        let mut enabled_services = Vec::new();
+        if get_bool("enable_wechat", false) { enabled_services.push("wechat".to_string()); }
+        if get_bool("enable_pushplus", false) { enabled_services.push("pushplus".to_string()); }
+        if get_bool("enable_serverchan", false) { enabled_services.push("serverchan".to_string()); }
+        if get_bool("enable_pushdeer", false) { enabled_services.push("pushdeer".to_string()); }
+        if get_bool("enable_feishu", false) { enabled_services.push("feishu".to_string()); }
+        if get_bool("enable_dingtalk", false) { enabled_services.push("dingtalk".to_string()); }
+        if get_bool("enable_bark", false) { enabled_services.push("bark".to_string()); }
+        if get_bool("enable_telegram", false) { enabled_services.push("telegram".to_string()); }
+        if get_bool("enable_generic", false) { enabled_services.push("generic".to_string()); }
+        if get_bool("enable_custom", false) { enabled_services.push("custom".to_string()); }
+
+        config.notification_config.enabled_push_services = enabled_services;
+
+        let wechat = get_str("wechat_webhook", "");
+        config.notification_config.wechat_webhook = if wechat.is_empty() { None } else { Some(wechat) };
+
+        let pushplus = get_str("pushplus_token", "");
+        config.notification_config.pushplus_token = if pushplus.is_empty() { None } else { Some(pushplus) };
+
+        let serverchan = get_str("serverchan_key", "");
+        config.notification_config.serverchan_key = if serverchan.is_empty() { None } else { Some(serverchan) };
+
+        let pushdeer_key = get_str("pushdeer_key", "");
+        config.notification_config.pushdeer_key = if pushdeer_key.is_empty() { None } else { Some(pushdeer_key) };
+
+        let pushdeer_url = get_str("pushdeer_url", "");
+        config.notification_config.pushdeer_url = if pushdeer_url.is_empty() { None } else { Some(pushdeer_url) };
+
+        let feishu = get_str("feishu_webhook", "");
+        config.notification_config.feishu_webhook = if feishu.is_empty() { None } else { Some(feishu) };
+
+        let dingtalk = get_str("dingtalk_webhook", "");
+        config.notification_config.dingtalk_webhook = if dingtalk.is_empty() { None } else { Some(dingtalk) };
+
+        let dingtalk_secret = get_str("dingtalk_secret", "");
+        config.notification_config.dingtalk_secret = if dingtalk_secret.is_empty() { None } else { Some(dingtalk_secret) };
+
+        let bark = get_str("bark_url", "");
+        config.notification_config.bark_url = if bark.is_empty() { None } else { Some(bark) };
+
+        let tg_token = get_str("tg_bot_token", "");
+        config.notification_config.tg_bot_token = if tg_token.is_empty() { None } else { Some(tg_token) };
+
+        let tg_chat_id = get_str("tg_chat_id", "");
+        config.notification_config.tg_chat_id = if tg_chat_id.is_empty() { None } else { Some(tg_chat_id) };
+
+        let generic = get_str("generic_webhook_url", "");
+        config.notification_config.generic_webhook_url = if generic.is_empty() { None } else { Some(generic) };
+
+        let custom_script = get_str("custom_script_path", "");
+        config.notification_config.custom_script_path = if custom_script.is_empty() { None } else { Some(custom_script) };
+
+        // let log_file = get_str("log_file", "");
+        // config.notification_config.log_file = if log_file.is_empty() { None } else { Some(log_file) };
+        config.notification_config.notify_log_enable = get_bool("notify_log_enable", true);
+        config.notification_config.notify_log_persist = get_bool("notify_log_persist", false);
+
+        config.notification_config.notify_sms = get_bool("notify_sms", true);
+        config.notification_config.notify_call = get_bool("notify_call", true);
+        config.notification_config.notify_memory_full_threshold = get_u8("notify_memory_full_threshold", 90);
+        config.notification_config.notify_signal_threshold = uci_data.get("notify_signal_threshold").and_then(|s| s.parse().ok()).unwrap_or(0);
+        config.notification_config.sms_delete_after_forward = get_bool("sms_delete_after_forward", false);
+        config.notification_config.delete_mms_notification = get_bool("delete_mms_notification", false);
+
+        // WebSocket Config
+        let ws_port = get_u16("websocket_port", 8765);
+        config.websocket_config.ipv4.port = ws_port;
+        config.websocket_config.ipv6.port = ws_port;
+        
+        let auth_key = get_str("websocket_auth_key", "");
+        config.websocket_config.auth_key = if auth_key.is_empty() { None } else { Some(auth_key) };
+
+        // Schedule Config
+        config.schedule_config.enabled = get_bool("schedule_enabled", false);
+        config.schedule_config.check_interval = get_int("schedule_check_interval", 60);
+        config.schedule_config.timeout = get_int("schedule_timeout", 180);
+        config.schedule_config.unlock_lte = get_bool("schedule_unlock_lte", true);
+        config.schedule_config.unlock_nr = get_bool("schedule_unlock_nr", true);
+        config.schedule_config.toggle_airplane = get_bool("schedule_toggle_airplane", true);
+
+        config.schedule_config.night_enabled = get_bool("schedule_night_enabled", true);
+        config.schedule_config.night_start = get_str("schedule_night_start", "22:00");
+        config.schedule_config.night_end = get_str("schedule_night_end", "06:00");
+        config.schedule_config.night_lte_type = get_u8("schedule_night_lte_type", 3);
+        config.schedule_config.night_lte_bands = get_str("schedule_night_lte_bands", "");
+        config.schedule_config.night_lte_arfcns = get_str("schedule_night_lte_arfcns", "");
+        config.schedule_config.night_lte_pcis = get_str("schedule_night_lte_pcis", "");
+        config.schedule_config.night_nr_type = get_u8("schedule_night_nr_type", 3);
+        config.schedule_config.night_nr_bands = get_str("schedule_night_nr_bands", "");
+        config.schedule_config.night_nr_arfcns = get_str("schedule_night_nr_arfcns", "");
+        config.schedule_config.night_nr_scs_types = get_str("schedule_night_nr_scs_types", "");
+        config.schedule_config.night_nr_pcis = get_str("schedule_night_nr_pcis", "");
+
+        config.schedule_config.day_enabled = get_bool("schedule_day_enabled", true);
+        config.schedule_config.day_lte_type = get_u8("schedule_day_lte_type", 3);
+        config.schedule_config.day_lte_bands = get_str("schedule_day_lte_bands", "");
+        config.schedule_config.day_lte_arfcns = get_str("schedule_day_lte_arfcns", "");
+        config.schedule_config.day_lte_pcis = get_str("schedule_day_lte_pcis", "");
+        config.schedule_config.day_nr_type = get_u8("schedule_day_nr_type", 3);
+        config.schedule_config.day_nr_bands = get_str("schedule_day_nr_bands", "");
+        config.schedule_config.day_nr_arfcns = get_str("schedule_day_nr_arfcns", "");
+        config.schedule_config.day_nr_scs_types = get_str("schedule_day_nr_scs_types", "");
+        config.schedule_config.day_nr_pcis = get_str("schedule_day_nr_pcis", "");
+
+        // Advanced Network Config
+        config.advanced_network_config.pdp_type = get_str("pdp_type", "ipv4v6");
+        config.advanced_network_config.ifname = get_str("ifname", "auto");
+        config.advanced_network_config.ra_master = get_bool("ra_master", true);
+        config.advanced_network_config.extend_prefix = get_bool("extend_prefix", true);
+        // 短信存储位置：模组掉电不保存，由后端每次启动时通过 AT+CPMS 重新下发
+        // UCI key: rg500q-webserver.config.sms_storage，可选值 SM / ME
+        let raw_sms = get_str("sms_storage", "SM").to_uppercase();
+        config.advanced_network_config.sms_storage = if raw_sms == "ME" {
+            "ME".to_string()
+        } else {
+            "SM".to_string() // 默认 SIM 卡
+        };
+        
+        // 解析列表类型的辅助函数
+        let get_list = |key: &str| -> Vec<String> {
+            match uci_data.get(key) {
+                Some(val) => val.split_whitespace()
+                                .map(|s| s.trim_matches('\'').trim_matches('"').to_string())
+                                .collect(),
+                None => Vec::new(),
+            }
+        };
+
+        let parsed_dns = get_list("dns_list");
+        if !parsed_dns.is_empty() {
+            config.advanced_network_config.dns_list = parsed_dns;
+        }
+
+        config.advanced_network_config.init_at_cmds = get_list("init_at_cmds");
+
+        // SysLog Config
+        config.sys_log_config.enable = get_bool("sys_log_enable", true);
+        config.sys_log_config.persist = get_bool("sys_log_persist", false);
+        let raw_level = get_str("sys_log_level", "info").to_lowercase();
+        config.sys_log_config.level = match raw_level.as_str() {
+            "error" | "warn" | "info" | "debug" => raw_level,
+            _ => "info".to_string(),
+        };
+        // config.sys_log_config.path_temp = get_str("sys_log_path_temp", "/tmp/rg500q-webserver.log");
+        // config.sys_log_config.path_persist = get_str("sys_log_path_persist", "/etc/rg500q-webserver.log");
+
+        // Env var overrides (for local debugging)
+        if let Ok(val) = std::env::var("AT_CONNECTION_TYPE") {
+            match val.as_str() {
+                "SERIAL" => config.at_config.connection_type = ConnectionType::Serial,
+                "NETWORK" => config.at_config.connection_type = ConnectionType::Network,
+                _ => {}
+            }
+        }
+        if let Ok(val) = std::env::var("AT_NETWORK_HOST") { config.at_config.network.host = val; }
+        if let Ok(val) = std::env::var("AT_NETWORK_PORT") { 
+            if let Ok(p) = val.parse() { config.at_config.network.port = p; }
+        }
+        if let Ok(val) = std::env::var("AT_SERIAL_PORT") { config.at_config.serial.port = val; }
+        if let Ok(val) = std::env::var("AT_SERIAL_BAUDRATE") { 
+             if let Ok(b) = val.parse() { config.at_config.serial.baudrate = b; }
+        }
+        // if let Ok(val) = std::env::var("AT_LOG_FILE") { config.notification_config.log_file = Some(val); }
+
+        debug!("Loaded configuration: {:?}", config);
+        config
+    }
+}

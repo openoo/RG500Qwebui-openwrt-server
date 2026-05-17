@@ -1,0 +1,65 @@
+mod config;
+mod connection;
+mod client;
+mod server;
+mod handlers;
+mod notifications;
+mod models;
+mod pdu;
+mod schedule;
+mod network;
+mod dial_monitor;
+mod syslog;
+mod rg500q;
+
+use config::Config;
+use notifications::NotificationManager;
+use client::ATClient;
+use server::start_server;
+use log::info;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+    
+
+    let config = Config::load();
+    let log_rx = syslog::init(&config);
+    
+    info!("Starting RG500Q WebUI (Rust Version)...");
+    
+    // 【新增】启动时先执行一次彻底的网络环境清理
+    let _ = network::clean_startup_state().await;
+    
+    let notifications = NotificationManager::new(config.notification_config.clone());
+    
+    let at_client = ATClient::new(config.clone(), notifications);
+    let at_client_arc = Arc::new(at_client.clone());
+    
+    // Spawn schedule monitor
+    let schedule_config = config.schedule_config.clone();
+    let monitor_client = at_client_arc.clone();
+    tokio::spawn(async move {
+        schedule::monitor_loop(monitor_client, schedule_config).await;
+    });
+
+    // Spawn dial monitor
+    let monitor_config = config.clone();
+    let monitor_client = at_client.clone();
+    tokio::spawn(async move {
+        dial_monitor::start_monitor(monitor_config, monitor_client).await;
+    });
+
+    // Start WebSocket server
+    start_server(
+        config.websocket_config.ipv4.port, 
+        config.websocket_config.ipv6.port,
+        config.websocket_config.auth_key.clone(),
+        at_client,
+        log_rx,
+        if config.sys_log_config.persist { "/var/log/rg500q-webserver.log".to_string() } else { "/tmp/rg500q-webserver.log".to_string() }
+    ).await;
+}
