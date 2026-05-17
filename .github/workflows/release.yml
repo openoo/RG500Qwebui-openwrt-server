@@ -17,121 +17,58 @@ permissions:
 
 jobs:
   build:
-    name: Build OpenWrt ${{ matrix.series }} ${{ matrix.format }} packages
-    runs-on: ubuntu-22.04
+    name: Build ${{ matrix.package }} for OpenWrt ${{ matrix.openwrt }}
+    runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - series: "24.10"
-            format: ipk
-          - series: "25.12"
-            format: apk
-
-    env:
-      OPENWRT_TARGET: qualcommax
-      OPENWRT_SUBTARGET: ipq807x
+          - openwrt: "24.10.6"
+            package: rg500q-webserver
+            package_dir: rg500q-webserver
+            extension: ipk
+          - openwrt: "24.10.6"
+            package: luci-app-rg500q-webui
+            package_dir: luci-app-rg500q-webui
+            extension: ipk
+          - openwrt: "25.12.4"
+            package: rg500q-webserver
+            package_dir: rg500q-webserver
+            extension: apk
+          - openwrt: "25.12.4"
+            package: luci-app-rg500q-webui
+            package_dir: luci-app-rg500q-webui
+            extension: apk
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential clang flex bison g++ gawk gcc-multilib gettext git \
-            libncurses-dev libssl-dev python3-distutils rsync unzip wget zlib1g-dev \
-            file zstd
-
-      - name: Download OpenWrt SDK
-        shell: bash
-        run: |
-          set -euxo pipefail
-          SERIES="${{ matrix.series }}"
-          RELEASE_VERSION="$(wget -qO- https://downloads.openwrt.org/releases/ \
-            | grep -oE "href=\"${SERIES}\\.[0-9]+/\"" \
-            | sed -E 's#href="([^/]+)/"#\1#' \
-            | sort -V \
-            | tail -n1)"
-          test -n "${RELEASE_VERSION}"
-          BASE_URL="https://downloads.openwrt.org/releases/${RELEASE_VERSION}/targets/${OPENWRT_TARGET}/${OPENWRT_SUBTARGET}"
-          SDK_LABEL="openwrt-${RELEASE_VERSION}-${OPENWRT_TARGET}-${OPENWRT_SUBTARGET}"
-          SDK_FILE="$(wget -qO- "${BASE_URL}/" | grep -oE 'openwrt-sdk-[^"]+Linux-x86_64\.tar\.zst' | head -n1)"
-          test -n "${SDK_FILE}"
-          wget -O openwrt-sdk.tar.zst "${BASE_URL}/${SDK_FILE}"
-          tar --use-compress-program=unzstd -xf openwrt-sdk.tar.zst
-          mv openwrt-sdk-* openwrt-sdk
-          echo "SDK_LABEL=${SDK_LABEL}" >> "$GITHUB_ENV"
-          echo "RELEASE_VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
-
-      - name: Copy packages into SDK
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p openwrt-sdk/package/RG500Qwebui-openwrt-server
-          rsync -a --delete \
-            --exclude='.git' \
-            --exclude='.github' \
-            ./ openwrt-sdk/package/RG500Qwebui-openwrt-server/
-
-      - name: Update feeds
-        working-directory: openwrt-sdk
-        run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-
-      - name: Configure SDK
-        working-directory: openwrt-sdk
-        run: |
-          make defconfig
-
-      - name: Build backend
-        working-directory: openwrt-sdk
-        run: |
-          make package/RG500Qwebui-openwrt-server/rg500q-webserver/compile V=s
-
-      - name: Build LuCI
-        working-directory: openwrt-sdk
-        run: |
-          make package/RG500Qwebui-openwrt-server/luci-app-rg500q-webui/compile V=s
-
-      - name: Collect ${{ matrix.format }} artifacts
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p "artifacts-${{ matrix.format }}"
-          if [ "${{ matrix.format }}" = "ipk" ]; then
-            find openwrt-sdk/bin -type f \( \
-              -name 'rg500q-webserver_*.ipk' -o \
-              -name 'luci-app-rg500q-webui_*.ipk' \
-            \) -exec cp -v {} "artifacts-${{ matrix.format }}/" \;
-          else
-            find openwrt-sdk/bin -type f \( \
-              -name 'rg500q-webserver-*.apk' -o \
-              -name 'luci-app-rg500q-webui-*.apk' \
-            \) -exec cp -v {} "artifacts-${{ matrix.format }}/" \;
-          fi
-          test "$(find "artifacts-${{ matrix.format }}" -type f | wc -l)" -gt 0
-
-      - name: Upload ${{ matrix.format }} artifacts
-        uses: actions/upload-artifact@v4
+      - name: Build package
+        uses: nooblk-98/openwrt-package-compile-action@main
         with:
-          name: RG500Qwebui-openwrt-server-openwrt-${{ matrix.series }}-${{ matrix.format }}-${{ env.OPENWRT_TARGET }}-${{ env.OPENWRT_SUBTARGET }}
-          path: artifacts-${{ matrix.format }}/*
+          sdk-version: ${{ matrix.openwrt }}
+          sdk-target: qualcommax
+          sdk-subtarget: ipq807x
+          package-name: ${{ matrix.package }}
+          package-dir: ${{ matrix.package_dir }}
+          feeds-update: packages luci
+          feeds-install-all-from: luci
+          artifact-name: ${{ matrix.package }}-openwrt-${{ matrix.openwrt }}-qualcommax-ipq807x
+          retention-days: 7
 
   release:
     name: Publish Release
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.publish_release == 'true'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download build artifacts
+      - name: Download package artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts

@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI support for RG500Q WebUI
-LUCI_DEPENDS:=+rg500q-webserver
+LUCI_DEPENDS:=
 LUCI_PKGARCH:=all
 
 PKG_NAME:=luci-app-rg500q-webui
