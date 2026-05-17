@@ -3,18 +3,6 @@ name: Build OpenWrt Packages
 on:
   workflow_dispatch:
     inputs:
-      legacy_openwrt_version:
-        description: Legacy OpenWrt release SDK used to build .ipk
-        required: true
-        default: 23.05.5
-      target:
-        description: OpenWrt target
-        required: true
-        default: qualcommax
-      subtarget:
-        description: OpenWrt subtarget
-        required: true
-        default: ipq807x
       publish_release:
         description: Publish GitHub Release
         required: true
@@ -29,22 +17,21 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.format }} packages
+    name: Build OpenWrt ${{ matrix.series }} ${{ matrix.format }} packages
     runs-on: ubuntu-22.04
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - format: ipk
-            sdk_channel: release
-          - format: apk
-            sdk_channel: snapshot
+          - series: "24.10"
+            format: ipk
+          - series: "25.12"
+            format: apk
 
     env:
-      LEGACY_OPENWRT_VERSION: ${{ github.event.inputs.legacy_openwrt_version || '23.05.5' }}
-      OPENWRT_TARGET: ${{ github.event.inputs.target || 'qualcommax' }}
-      OPENWRT_SUBTARGET: ${{ github.event.inputs.subtarget || 'ipq807x' }}
+      OPENWRT_TARGET: qualcommax
+      OPENWRT_SUBTARGET: ipq807x
 
     steps:
       - name: Checkout
@@ -62,19 +49,22 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          if [ "${{ matrix.sdk_channel }}" = "release" ]; then
-            BASE_URL="https://downloads.openwrt.org/releases/${LEGACY_OPENWRT_VERSION}/targets/${OPENWRT_TARGET}/${OPENWRT_SUBTARGET}"
-            SDK_LABEL="${LEGACY_OPENWRT_VERSION}-${OPENWRT_TARGET}-${OPENWRT_SUBTARGET}"
-          else
-            BASE_URL="https://downloads.openwrt.org/snapshots/targets/${OPENWRT_TARGET}/${OPENWRT_SUBTARGET}"
-            SDK_LABEL="snapshot-${OPENWRT_TARGET}-${OPENWRT_SUBTARGET}"
-          fi
+          SERIES="${{ matrix.series }}"
+          RELEASE_VERSION="$(wget -qO- https://downloads.openwrt.org/releases/ \
+            | grep -oE "href=\"${SERIES}\\.[0-9]+/\"" \
+            | sed -E 's#href="([^/]+)/"#\1#' \
+            | sort -V \
+            | tail -n1)"
+          test -n "${RELEASE_VERSION}"
+          BASE_URL="https://downloads.openwrt.org/releases/${RELEASE_VERSION}/targets/${OPENWRT_TARGET}/${OPENWRT_SUBTARGET}"
+          SDK_LABEL="openwrt-${RELEASE_VERSION}-${OPENWRT_TARGET}-${OPENWRT_SUBTARGET}"
           SDK_FILE="$(wget -qO- "${BASE_URL}/" | grep -oE 'openwrt-sdk-[^"]+Linux-x86_64\.tar\.zst' | head -n1)"
           test -n "${SDK_FILE}"
           wget -O openwrt-sdk.tar.zst "${BASE_URL}/${SDK_FILE}"
           tar --use-compress-program=unzstd -xf openwrt-sdk.tar.zst
           mv openwrt-sdk-* openwrt-sdk
           echo "SDK_LABEL=${SDK_LABEL}" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
 
       - name: Copy packages into SDK
         shell: bash
@@ -112,18 +102,23 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "artifacts-${{ matrix.format }}"
-          find openwrt-sdk/bin -type f \( \
-            -name 'rg500q-webserver_*.ipk' -o \
-            -name 'luci-app-rg500q-webui_*.ipk' -o \
-            -name 'rg500q-webserver-*.apk' -o \
-            -name 'luci-app-rg500q-webui-*.apk' \
-          \) -exec cp -v {} "artifacts-${{ matrix.format }}/" \;
+          if [ "${{ matrix.format }}" = "ipk" ]; then
+            find openwrt-sdk/bin -type f \( \
+              -name 'rg500q-webserver_*.ipk' -o \
+              -name 'luci-app-rg500q-webui_*.ipk' \
+            \) -exec cp -v {} "artifacts-${{ matrix.format }}/" \;
+          else
+            find openwrt-sdk/bin -type f \( \
+              -name 'rg500q-webserver-*.apk' -o \
+              -name 'luci-app-rg500q-webui-*.apk' \
+            \) -exec cp -v {} "artifacts-${{ matrix.format }}/" \;
+          fi
           test "$(find "artifacts-${{ matrix.format }}" -type f | wc -l)" -gt 0
 
       - name: Upload ${{ matrix.format }} artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: RG500Qwebui-openwrt-server-${{ matrix.format }}-${{ env.SDK_LABEL }}
+          name: RG500Qwebui-openwrt-server-openwrt-${{ matrix.series }}-${{ matrix.format }}-${{ env.OPENWRT_TARGET }}-${{ env.OPENWRT_SUBTARGET }}
           path: artifacts-${{ matrix.format }}/*
 
   release:
