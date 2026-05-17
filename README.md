@@ -41,6 +41,8 @@ make package/rg500q-webserver/compile
 make package/luci-app-rg500q-webui/compile
 ```
 
+GitHub Actions 目前自动发布 LuCI 包和源码包。Rust 后端包需要完整 OpenWrt buildroot 或已缓存 Rust host 工具链的 SDK 环境；直接在 GitHub runner 的临时 SDK 中现编 `rust/host` 很慢，也容易失败。
+
 ## 安装
 
 把生成的 `.ipk` 上传到路由器 `/tmp`，然后安装：

@@ -25,18 +25,10 @@ jobs:
       matrix:
         include:
           - openwrt: "24.10.6"
-            package: rg500q-webserver
-            package_dir: rg500q-webserver
-            extension: ipk
-          - openwrt: "24.10.6"
             package: luci-app-rg500q-webui
             package_dir: luci-app-rg500q-webui
             extension: ipk
-          - openwrt: "25.12.4"
-            package: rg500q-webserver
-            package_dir: rg500q-webserver
-            extension: apk
-          - openwrt: "25.12.4"
+          - openwrt: "25.12.3"
             package: luci-app-rg500q-webui
             package_dir: luci-app-rg500q-webui
             extension: apk
